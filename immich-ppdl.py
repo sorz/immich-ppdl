@@ -136,7 +136,7 @@ def fetch_assets(thread_id: int, settings: Settings, queue: Queue[Asset | None])
             / asset.originalFileName
         )
         if path.exists():
-            logger.info(f"Th#{thread_id} skip existed file {path}")
+            logger.debug(f"Th#{thread_id} skip existing {path}")
             continue
         if settings.dry:
             print(path)
@@ -144,7 +144,9 @@ def fetch_assets(thread_id: int, settings: Settings, queue: Queue[Asset | None])
         try:
             fetch_asset(settings, asset, path)
         except Exception as err:
-            logger.error(f"Th#{thread_id} failed to download {path}: {err}")
+            logger.error(
+                f"Th#{thread_id} failed to download {path} ({asset.id}): {err}"
+            )
             path.unlink(missing_ok=True)
             continue
         logger.info(f"Th#{thread_id} save to {path}")
