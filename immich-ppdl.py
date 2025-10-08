@@ -11,6 +11,7 @@ from hashlib import sha1
 import base64
 
 from requests import Session
+from requests.adapters import HTTPAdapter
 from pydantic import BaseModel, Field
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
@@ -26,7 +27,7 @@ class Settings(BaseSettings, cli_parse_args=True):
     person_id: UUID = Field(..., description="Person UUID")
     after: datetime | None = Field(None, description="Photos created after this")
     save_to: Path = Field(Path("."), description="Default to current directory")
-    threads: int = Field(10, description="Number of downloading threads")
+    threads: int = Field(4, description="Number of downloading threads")
     dry: bool = Field(False, description="List photos without actually download")
 
     model_config = SettingsConfigDict()
@@ -158,6 +159,14 @@ def main():
     if settings.dry:
         logger.warning("Dry mode enabled, won't download any files")
     session.headers["x-api-key"] = settings.immich_api_key
+    session.mount(
+        settings.immich_api_url,
+        HTTPAdapter(
+            pool_connections=settings.threads + 1,
+            pool_maxsize=settings.threads + 1,
+            max_retries=3,
+        ),
+    )
 
     # Setup threads
     queue: Queue[Asset | None] = Queue(maxsize=settings.threads)
