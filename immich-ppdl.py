@@ -2,7 +2,7 @@ import logging
 from enum import Enum
 from os import environ
 from pathlib import Path
-from datetime import datetime
+from datetime import datetime, timedelta
 from typing import Iterator
 from uuid import UUID
 from queue import Queue
@@ -12,7 +12,7 @@ import base64
 
 from requests import Session
 from requests.adapters import HTTPAdapter
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("immmich-ppdl")
@@ -25,12 +25,26 @@ class Settings(BaseSettings, cli_parse_args=True):
         ..., description="Required permission: asset.read, asset.download"
     )
     person_id: UUID = Field(..., description="Person UUID")
-    after: datetime | None = Field(None, description="Photos created after this")
+    _after: datetime | None = None
+    after: datetime | None = Field(None, description="Photos created after that time")
+    last_days: int | None = Field(
+        None, description="Equivalent to --after (today - last_days)"
+    )
     save_to: Path = Field(Path("."), description="Default to current directory")
     threads: int = Field(4, description="Number of downloading threads")
     dry: bool = Field(False, description="List photos without actually download")
 
     model_config = SettingsConfigDict()
+
+    @model_validator(mode="after")
+    def parse(self) -> "Settings":
+        if self.after is not None and self.last_days is not None:
+            raise ValueError("`after` and `last_days` cannot both be set")
+        if self.after is not None:
+            self._after = self.after
+        elif self.last_days is not None:
+            self._after = datetime.today() - timedelta(days=self.last_days)
+        return self
 
 
 class AssetVisibility(Enum):
@@ -48,9 +62,10 @@ class AssetType(Enum):
 
 
 class SearchAssetsRequest(BaseModel):
-    personIds: list[UUID]
-    visibility: AssetVisibility
-    type: AssetType
+    personIds: list[UUID] | None = None
+    visibility: AssetVisibility | None = None
+    type: AssetType | None = None
+    createdAfter: datetime | None = None
     size: int = Field(..., description="page size")
     page: int = Field(..., description="start from 1")
 
@@ -85,12 +100,13 @@ def search_assets(settings: Settings) -> Iterator[Asset]:
             personIds=[settings.person_id],
             visibility=AssetVisibility.TIMELINE,
             type=AssetType.IMAGE,
+            createdAfter=settings._after,
             size=50,
             page=page,
         )
         resp = session.post(
             f"{settings.immich_api_url}/search/metadata",
-            json=req.model_dump(mode="json"),
+            json=req.model_dump(mode="json", exclude_none=True),
         )
         resp.raise_for_status()
         asset_resp = SearchAssetResponse.model_validate(resp.json())
