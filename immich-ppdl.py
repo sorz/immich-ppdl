@@ -83,6 +83,7 @@ class Asset(BaseModel):
         ..., description="local date and time when the photo/video was taken"
     )
     originalFileName: str
+    originalPath: str
 
 
 class SearchAssetResponse(BaseModel):
@@ -130,8 +131,10 @@ def fetch_asset(settings: Settings, asset: Asset, path: Path):
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
     url = f"{settings.immich_api_url}/assets/{asset.id}/original"
-    hash = download_and_sha1(url, path)
-    if base64.decodebytes(asset.checksum.encode()) != hash:
+    file_hash = download_and_sha1(url, path)
+    path_hash = sha1(f"path:{asset.originalPath}".encode()).digest()
+    # Immich use hash of path for files in external libraries
+    if base64.decodebytes(asset.checksum.encode()) not in (file_hash, path_hash):
         raise Exception("hash mismatched")
 
 
