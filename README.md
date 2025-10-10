@@ -6,6 +6,7 @@ Features:
 
 - Arbitrary search filters
 - Multi-threaded downloading
+- Resume download from partial file
 - Skip existing files
 - Use CLI args, environment vars, or secret file passing options
 - Checksum validation (except external libraries)
@@ -105,5 +106,3 @@ Folders will be created, download will be skiped if the same-name file exist.
 - Output path cannot be configured with options
 - If multiple files with the same original file name taken on the same day,
   only one will be download
-- If the program exits abnormally, half-downloaded files may remain.
-  After restarting, it will not try to re-download these corrupted files.

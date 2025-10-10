@@ -11,17 +11,19 @@ from enum import Enum
 from os import environ
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Any, Iterator
+from typing import Any, Iterator, BinaryIO
 from uuid import UUID
 from queue import Queue
 from threading import Thread
 from hashlib import sha1
 import base64
 
-from requests import Session
+from requests import Response, Session
 from requests.adapters import HTTPAdapter
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+PARTIAL_SUFFIX = ".part"
 
 logger = logging.getLogger("immmich-ppdl")
 session = Session()
@@ -129,15 +131,50 @@ def search_assets(settings: Settings) -> Iterator[Asset]:
         yield from asset_resp.assets.items
 
 
-def download_and_sha1(url: str, to: Path) -> bytes:
-    logger.debug(f"Downalod {url} to {to}")
+def sha1_file(file: Path):
+    hasher = sha1()
+    size = 0
+    with file.open("rb") as f:
+        while True:
+            buf = f.read(64 * 1024)
+            if not buf:
+                return size, hasher
+            size += len(buf)
+            hasher.update(buf)
+
+
+def write_response_with_hash(resp: Response, out: BinaryIO, hasher):
+    for chunk in resp.iter_content(chunk_size=None):
+        hasher.update(chunk)
+        out.write(chunk)
+
+
+def resume_partial_download(url: str, partial: Path) -> bytes | None:
+    logger.info(f"Continue to download parital file {partial}")
+    size, hasher = sha1_file(partial)
+    headers = dict(range=f"bytes={size}-")
+    with session.get(url, stream=True, headers=headers) as resp:
+        if resp.status_code != 206:
+            logger.warning(f"Server respond {resp}, expect 206")
+            return
+        with partial.open("ab") as f:
+            write_response_with_hash(resp, f, hasher)
+        return hasher.digest()
+
+
+def download_and_sha1(url: str, output: Path) -> bytes:
+    logger.debug(f"Downalod {url} to {output}")
+    if output.exists():
+        digest = resume_partial_download(url, output)
+        if digest is not None:
+            return digest
+        logger.info("Fallback to full-range download")
+
     hasher = sha1()
     with session.get(url, stream=True) as resp:
         resp.raise_for_status()
-        with to.open("wb") as f:
-            for chunk in resp.iter_content(chunk_size=None):
-                hasher.update(chunk)
-                f.write(chunk)
+        with output.open("wb") as f:
+            write_response_with_hash(resp, f, hasher)
     return hasher.digest()
 
 
@@ -145,11 +182,14 @@ def fetch_asset(settings: Settings, asset: Asset, path: Path):
     if not path.parent.exists():
         path.parent.mkdir(parents=True, exist_ok=True)
     url = f"{settings.immich_api_url}/assets/{asset.id}/original"
-    file_hash = download_and_sha1(url, path)
+    tmpfile = path.with_suffix(path.suffix + PARTIAL_SUFFIX)
+    file_hash = download_and_sha1(url, tmpfile)
     path_hash = sha1(f"path:{asset.originalPath}".encode()).digest()
     # Immich use hash of path for files in external libraries
     if base64.decodebytes(asset.checksum.encode()) not in (file_hash, path_hash):
+        tmpfile.unlink()
         raise Exception("hash mismatched")
+    tmpfile.rename(path)
 
 
 def fetch_assets(thread_id: int, settings: Settings, queue: Queue[Asset | None]):
@@ -180,7 +220,6 @@ def fetch_assets(thread_id: int, settings: Settings, queue: Queue[Asset | None])
             logger.error(
                 f"Th#{thread_id} failed to download {path} ({asset.id}): {err}"
             )
-            path.unlink(missing_ok=True)
             continue
         logger.info(f"Th#{thread_id} save to {path}")
 
