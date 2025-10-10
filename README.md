@@ -4,9 +4,11 @@ Script to batch download files from Immich with arbitrary search filters.
 
 Features:
 
-- Multithread downloading
 - Arbitrary search filters
-- Checksum validation
+- Multi-threaded downloading
+- Skip existing files
+- Use CLI args, environment vars, or secret file passing options
+- Checksum validation (except external libraries)
 
 This is a third-party tool and not affiliated to the Immich project.
 
@@ -79,20 +81,24 @@ For example:
 
 ```bash
 uv run immich-ppdl.py \
+  --last_days 3 \
   --person_ids 1111-aaa-bbb --person_ids 2222-xxx-yyy \
   --filters '{ "model": "Pixel 10", "isFavorite": true, "type": "IMAGE" }'
 ```
 
+> [!TIP]
+> Pass `--dry` to list all matched files without actually download them.
+
 See Immich API docs on
 [/search/metadata](https://api.immich.app/endpoints/search/searchAssets)
-for a complete filter options.
+for a complete list of options.
 
 ### Output directory
 
 Files are written to `{save_to}/YYYY/MM/DD/OriginalFileName`.
 Currently it's unconfigurable.
 
-Folders will be created, download will be skiped if same-name file exist.
+Folders will be created, download will be skiped if the same-name file exist.
 
 ## Known issues
 
