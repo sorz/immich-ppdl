@@ -3,7 +3,7 @@ from enum import Enum
 from os import environ
 from pathlib import Path
 from datetime import datetime, timedelta
-from typing import Iterator
+from typing import Any, Iterator
 from uuid import UUID
 from queue import Queue
 from threading import Thread
@@ -12,7 +12,7 @@ import base64
 
 from requests import Session
 from requests.adapters import HTTPAdapter
-from pydantic import BaseModel, Field, model_validator
+from pydantic import BaseModel, ConfigDict, Field, model_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 logger = logging.getLogger("immmich-ppdl")
@@ -24,11 +24,19 @@ class Settings(BaseSettings, cli_parse_args=True):
     immich_api_key: str = Field(
         ..., description="Required permission: asset.read, asset.download"
     )
-    person_id: UUID = Field(..., description="Person UUID")
+    person_ids: list[UUID] = Field([], description="Person UUID")
     _after: datetime | None = None
     after: datetime | None = Field(None, description="Photos created after that time")
     last_days: int | None = Field(
         None, description="Equivalent to --after (today - last_days)"
+    )
+    filters: dict[str, Any] = Field(
+        {},
+        description=(
+            'Extra filters e.g. `{ "type": "IMAGE", "isFavorite": true }`. '
+            "It overrides other filters set with specific options. "
+            "See https://api.immich.app/endpoints/search/searchAssets"
+        ),
     )
     save_to: Path = Field(Path("."), description="Default to current directory")
     threads: int = Field(4, description="Number of downloading threads")
@@ -54,20 +62,14 @@ class AssetVisibility(Enum):
     LOCKED = "locked"
 
 
-class AssetType(Enum):
-    IMAGE = "IMAGE"
-    VIDEO = "VIDEO"
-    AUDIO = "AUDIO"
-    OTHER = "OTHER"
-
-
 class SearchAssetsRequest(BaseModel):
     personIds: list[UUID] | None = None
     visibility: AssetVisibility | None = None
-    type: AssetType | None = None
     createdAfter: datetime | None = None
     size: int = Field(..., description="page size")
     page: int = Field(..., description="start from 1")
+
+    model_config = ConfigDict(extra="allow")
 
 
 class Asset(BaseModel):
@@ -95,15 +97,19 @@ class SearchAssetResponse(BaseModel):
 
 
 def search_assets(settings: Settings) -> Iterator[Asset]:
+    filters: dict[str, Any] = dict(
+        personIds=settings.person_ids,
+        visibility=AssetVisibility.TIMELINE,
+        createdAfter=settings._after,
+    )
+    filters.update(**settings.filters)
+    logger.info(f"Filters: {filters}")
     page: int | None = 1
     while page:
         req = SearchAssetsRequest(
-            personIds=[settings.person_id],
-            visibility=AssetVisibility.TIMELINE,
-            type=AssetType.IMAGE,
-            createdAfter=settings._after,
             size=50,
             page=page,
+            **filters,
         )
         resp = session.post(
             f"{settings.immich_api_url}/search/metadata",
@@ -176,7 +182,7 @@ def main():
     settings = Settings(
         _secrets_dir=environ.get("CREDENTIALS_DIRECTORY"),  # type: ignore
     )
-    logger.info(f"Download person {settings.person_id} to {settings.save_to.resolve()}")
+    logger.info(f"Download to {settings.save_to.resolve()}")
     if settings.dry:
         logger.warning("Dry mode enabled, won't download any files")
     session.headers["x-api-key"] = settings.immich_api_key
