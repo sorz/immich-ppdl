@@ -1,3 +1,11 @@
+#!/usr/bin/env python3
+# /// script
+# requires-python = ">=3.11"
+# dependencies = [
+#     "pydantic-settings",
+#     "requests",
+# ]
+# ///
 import logging
 from enum import Enum
 from os import environ
