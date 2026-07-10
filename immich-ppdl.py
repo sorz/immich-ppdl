@@ -58,10 +58,16 @@ class Settings(BaseSettings, cli_parse_args=True):
     def parse(self) -> "Settings":
         if self.after is not None and self.last_days is not None:
             raise ValueError("`after` and `last_days` cannot both be set")
+
         if self.after is not None:
             self._after = self.after
         elif self.last_days is not None:
             self._after = datetime.today() - timedelta(days=self.last_days)
+
+        # assume local timezone if not set by user
+        if self._after is not None and self._after.tzinfo is None:
+            self._after = self._after.astimezone()
+
         return self
 
 
